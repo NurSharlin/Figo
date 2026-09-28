@@ -1,0 +1,1006 @@
+/* Figo phone control interface - "Strip" direction.
+
+   Served from the device itself, including in SoftAP mode, so: no web fonts, no
+   CDN, no images. Every shape here is a CSS box - the greeting face and the
+   320x172 device previews included. */
+
+/* ---------------------------------------------------------------- tokens */
+/* Two sets, swapped by data-theme on <html>. Bright mode themes ONLY this
+   page: the device frames stay #000 in both, because they are a mirror of
+   what the panel actually draws. */
+:root {
+  --bg: #000000;
+  --fg: #FFFFFF;
+  --muted: #8A8A8A;
+  --dim: #5A5A5A;
+  --line: #1A1A1A;
+  --chip: #111111;
+  --field: #333333;
+  --sheet-bg: #0C0C0C;
+  --frame-edge: #2E2E2E;
+  --tab-bg: #050505;
+  --tab-idle: #4A4A4A;
+
+  /* Device palette - identical in both themes, never re-themed. */
+  --up: #00BC16;
+  --up-light: #5CCD4D;
+  --down: #D60307;
+  --warn: #D68503;
+  --fg-neutral: #C9AE00;
+  --dot-active: #C2C2C2;
+  --dot-idle: #676767;
+  --ok-text: #0F8F17;
+  --danger-edge: #C4585A;
+  --on-green: #001A03;
+
+  --pad: 22px;
+}
+
+[data-theme="bright"] {
+  --bg: #F6F5F2;
+  --fg: #101010;
+  --muted: #6A6A6A;
+  --dim: #8C8C8C;
+  --line: #E3E1DC;
+  --chip: #EBE9E4;
+  --field: #CFCDC7;
+  --sheet-bg: #FFFFFF;
+  --frame-edge: #CFCDC7;
+  --tab-bg: #FFFFFF;
+  --tab-idle: #A0A0A0;
+}
+
+/* ----------------------------------------------------------------- base */
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; height: 100%; }
+
+/* Set on html as well as body (below), not instead of it. Which of the two
+   the viewport takes its overscroll behaviour from is a propagation rule
+   engines have disagreed about; declaring it on both removes the question,
+   and it is what keeps a horizontal overshoot from reaching the browser's
+   own back/forward gesture. */
+html { overscroll-behavior: none; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  /* An app frame, not a document: the page itself never scrolls - each tab
+     panel that needs to scrolls internally. dvh rather than vh on purpose:
+     vh is the LARGEST viewport on iOS, which would leave the bottom of the
+     frame under the collapsed URL bar. overscroll-behavior kills the iOS
+     rubber-band, which could otherwise claim a slightly-diagonal swipe on
+     the filmstrip before JS ever saw it. */
+  height: 100vh; /* fallback for engines without dvh */
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* A phone page, not a phone-shaped page: full width on a handset, a centred
+   column on anything wider so it never stretches across a tablet. */
+#app {
+  max-width: 430px;
+  margin: 0 auto;
+  height: 100%;
+  overflow: hidden;
+  padding: 26px var(--pad) 0;
+  /* Clears the fixed tab bar plus the home indicator. Because #app is
+     border-box and 100% tall, this padding is what pins the panels' scroll
+     area above the tab bar. */
+  padding-bottom: calc(112px + env(safe-area-inset-bottom, 0px));
+}
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; height: 100%; overflow-y: auto; }
+/* The Screens tab is the one panel that must NOT scroll - its content fits the
+   frame, and a vertical scroller here would compete with the strip's own
+   gestures for every touch. 'visible', NOT 'hidden': the panel must not be a
+   clip box either, because .strip-wrap's negative margins hang 22px outside it
+   (that is what lets frames scroll edge to edge) and the star badge overhangs
+   its cell - overflow:hidden here sliced both off at the panel edge on the
+   phone. And 'overflow-y: hidden; overflow-x: visible' is not expressible in
+   CSS (x would compute to auto), so visible is the only value that works.
+   Non-scrollability comes from the locked body: a non-scroller cannot scroll. */
+#tab-screens.active { overflow: visible; }
+[hidden] { display: none !important; }
+
+button, input, select { font-family: inherit; color: var(--fg); }
+button { cursor: pointer; }
+
+/* ----------------------------------------------------------------- type */
+.title {
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  margin: 0;
+}
+.title-lg { font-size: 44px; }
+/* Two short lines ("Hi!" / "I am Figo!") need a hair more leading than one. */
+.title-2l { line-height: 1.02; }
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--up);
+}
+.eyebrow.sub { color: var(--dim); }
+
+.lede { font-size: 14px; line-height: 1.55; color: var(--muted); margin: 12px 0 26px; }
+.intro { font-size: 15px; line-height: 1.55; color: var(--muted); margin: 30px 0 26px; }
+.hint { font-size: 13px; line-height: 1.5; color: var(--muted); margin: 10px 0 0; }
+.caption { font-size: 12px; line-height: 1.5; color: var(--dim); margin: 14px 0 0; }
+
+/* Reserves its line height so the layout does not jump when a message
+   appears and clears again 2.8s later. */
+.msg {
+  min-height: 16px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  text-align: center;
+  color: var(--ok-text);
+}
+.msg.err { color: var(--down); }
+
+/* -------------------------------------------------------------- controls */
+.btn-primary {
+  width: 100%;
+  padding: 16px;
+  background: var(--up);
+  color: var(--on-green);
+  border: none;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.btn-primary:disabled {
+  opacity: 0.55;
+}
+.btn-chip {
+  background: var(--chip);
+  border: none;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.btn-danger {
+  flex: 1;
+  padding: 14px;
+  background: none;
+  border: 1px solid var(--danger-edge);
+  border-radius: 999px;
+  color: var(--down);
+  font-size: 13px;
+}
+/* Armed is a different button, not a hover state: filled, so it cannot be
+   mistaken at a glance for the idle outline one tap ago. */
+.btn-danger.armed {
+  background: var(--down);
+  border-color: var(--down);
+  color: #fff;
+  font-weight: 700;
+}
+.btn-neutral {
+  flex: 1;
+  padding: 14px;
+  background: var(--chip);
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.field-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+
+/* Underline fields, the design's only input treatment. */
+.field {
+  width: 100%;
+  padding: 12px 0;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--field);
+  font-size: 16px;
+  border-radius: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.field-lg { padding: 15px 0; font-size: 17px; }
+.field-sm { padding: 10px 0; font-size: 14px; }
+.field::placeholder { color: var(--muted); }
+.field:focus { outline: none; border-bottom-color: var(--up); }
+
+/* Toggle: 52x30 track, 24px knob travelling 3px -> 25px. */
+.toggle {
+  flex: none;
+  width: 52px;
+  height: 30px;
+  border-radius: 999px;
+  border: none;
+  padding: 0;
+  position: relative;
+  background: var(--field);
+  transition: background 0.2s ease;
+}
+.toggle[aria-checked="true"] { background: var(--up); }
+.toggle span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.2s ease;
+}
+.toggle[aria-checked="true"] span { left: 25px; }
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 6px;
+}
+.toggle-row .lbl { flex: 1; min-width: 0; }
+.toggle-row .lbl b { display: block; font-size: 15px; font-weight: 400; }
+.toggle-row .lbl small {
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+  line-height: 1.45;
+  color: var(--dim);
+}
+
+/* Brightness. The explicit height is load-bearing, not cosmetic: a 3px track
+   collapses the element box to a 3px tall hit area, which is unusable on a
+   touchscreen. Caught in design review. */
+.range {
+  width: 100%;
+  height: 44px;
+  margin: 0 0 12px;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.range:focus { outline: none; }
+.range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--field);
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -8.5px;
+  border: none;
+  border-radius: 50%;
+  background: var(--up);
+}
+.range::-moz-range-track { height: 3px; border-radius: 2px; background: var(--field); }
+.range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: var(--up);
+}
+
+/* --------------------------------------------------------- rows and lists */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  font-size: 15px;
+}
+.row .k { color: var(--muted); }
+.row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.row-plain {
+  display: flex;
+  justify-content: space-between;
+  font-size: 15px;
+  margin-bottom: 14px;
+}
+.row-plain .k { color: var(--muted); }
+.row-plain .v { font-weight: 700; }
+
+.net-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px 0;
+  border-top: 1px solid var(--line);
+  font-size: 16px;
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  width: 100%;
+  text-align: left;
+}
+.net-row .rssi { font-size: 12px; color: var(--dim); white-space: nowrap; }
+.net-empty {
+  padding: 15px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  color: var(--dim);
+}
+
+/* Freshness rows on the Figo tab. */
+.fresh-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+.fresh-row .name {
+  font-size: 15px;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fresh-row .age { font-size: 12px; white-space: nowrap; }
+.dot7 { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.ok { color: var(--up); }
+.ok-bg { background: var(--up); }
+.stale { color: var(--warn); }
+.stale-bg { background: var(--warn); }
+.idle { color: var(--dim); }
+.idle-bg { background: var(--dim); }
+
+/* ------------------------------------------------------- greeting face */
+/* CSS shapes only. Drawn in a 96x84
+   box and shown at 1.2x inside a 115x101 slot. Ink is the theme foreground
+   and the pupils are the theme background, so the face inverts in bright
+   mode and still reads. */
+.hello-row { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+.hello-row .title { flex: 1; min-width: 0; }
+.face-slot { flex: none; width: 115px; height: 101px; }
+.face {
+  width: 96px;
+  height: 84px;
+  position: relative;
+  transform: scale(1.2);
+  transform-origin: top left;
+}
+/* A brow is a 35x8 window onto a big circle: the visible sliver is the arc
+   chord (35 wide, 3 of rise), which is how the SVG draws it. */
+.face .brow { position: absolute; top: 2.4px; width: 35px; height: 8px; overflow: hidden; }
+.face .brow-l { left: 2.6px; transform: rotate(-3deg); }
+.face .brow-r { left: 58.8px; transform: rotate(3deg); }
+.face .brow i {
+  position: absolute;
+  left: -35px;
+  top: 0;
+  width: 105px;
+  height: 105px;
+  border: 5.5px solid var(--fg);
+  border-radius: 50%;
+}
+.face .cap {
+  position: absolute;
+  width: 5.5px;
+  height: 5.5px;
+  border-radius: 50%;
+  background: var(--fg);
+}
+.face .brow .cap { top: 2.9px; }
+.face .cap-l { left: 0; }
+.face .cap-r { right: 0; }
+.face .eye {
+  position: absolute;
+  top: 17.5px;
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  background: var(--fg);
+}
+.face .eye-l { left: 3.9px; }
+.face .eye-r { left: 58px; }
+.face .eye i {
+  position: absolute;
+  top: 12px;
+  width: 11.8px;
+  height: 11.6px;
+  border-radius: 50%;
+  background: var(--bg);
+}
+.face .eye-l i { left: 11.8px; }
+.face .eye-r i { left: 11.7px; }
+.face .mouth {
+  position: absolute;
+  left: 33px;
+  top: 68.1px;
+  width: 31px;
+  height: 12.5px;
+  overflow: hidden;
+}
+.face .mouth i {
+  position: absolute;
+  left: -5px;
+  bottom: 0;
+  width: 41px;
+  height: 41px;
+  border: 5.5px solid var(--fg);
+  border-radius: 50%;
+}
+.face .mouth .cap { top: 0; }
+
+/* ------------------------------------------------------------- filmstrip */
+/* Breaks out of the #app padding so frames can scroll edge to edge, then
+   pays the 22px back as strip padding - which is also the constant the drag
+   and dot-jump maths subtract. */
+.strip-wrap { margin: 0 calc(-1 * var(--pad)); }
+.strip {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding: 22px var(--pad) 10px;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  /* Stops a swipe that runs off the first or last frame from chaining its
+     leftover scroll out to the document, which on Android Chrome is what the
+     back/forward navigation gesture is built on. 'contain', not 'none': the
+     local rubber-band at the two ends is feel worth keeping, and it is only
+     the chaining that navigates. This does NOT reach iOS Safari's edge swipe,
+     which is a system gesture outside the page's reach - see the note on
+     apple-mobile-web-app-capable in index.html. */
+  overscroll-behavior-x: contain;
+  /* A frame is a picture of the device, not a document. Without this, the
+     ~280ms hold that picks a frame up for reordering also fires the OS text
+     selection gesture, so the drag starts with the preview's own labels
+     highlighted (and, on iOS, a callout bubble over them). Both properties
+     inherit, so the whole strip is covered; nothing in here is text anyone
+     would want to select, and the star is a <button> either way. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  /* No touch-action override, deliberately: browsing is NATIVE panning, with
+     the compositor tracking the finger and native inertia + the snap rule
+     above landing the release. A JS-driven swipe was tried (touch-action:
+     pan-y + pointermove -> scrollLeft) and reverted - main-thread tracking
+     visibly trails the finger on iOS. The hold-to-reorder drag survives on a
+     natively-pannable strip because of the non-passive touchmove guard in
+     wire(): preventDefault while a frame is held stops the pan from ever
+     starting for that touch. touch-action could not express this - it is
+     latched at touchstart, before a browse and a hold are distinguishable. */
+}
+.strip::-webkit-scrollbar { display: none; }
+/* Snapping fights the reorder: it keeps yanking the strip back to a frame
+   boundary while the drag's auto-scroll is writing scrollLeft, and the 180ms
+   drop flight's translateX is computed against the exact, possibly-off-snap
+   position auto-scroll released at. If snap re-engages before the flight and
+   the ensuing rebuild are done, the engine pulls scrollLeft to the nearest
+   snap point mid-flight and the frame lands somewhere it never actually flew
+   to. Browsing keeps snap ON - it is what lands a native fling on a frame. */
+.strip.dragging,
+.strip.dropping { scroll-snap-type: none; }
+
+.cell {
+  position: relative;
+  flex: none;
+  scroll-snap-align: center;
+  /* One flick, one screen. Native inertia is the browser's, not ours - there
+     is no knob for its deceleration - so the only honest lever on "swiping
+     moves too fast" is where the fling is ALLOWED to stop: 'always' makes
+     every frame a mandatory stop, so a hard flick can no longer sail past
+     two or three of them. It costs the ability to cross the strip in one
+     throw, which with a cap of eight frames is a fair trade.
+     Inert during a reorder - .strip.dragging/.dropping turn snapping off
+     entirely - and inert for centerFrame()'s instant scrollTo, which jumps
+     rather than scrolls and so passes over nothing.
+     UNVERIFIED, and iOS-only by nature: measured on the test harness's
+     desktop Chrome it changes NOTHING, because that engine's mandatory-snap
+     fling already halts at the first snap point (probed at several flick
+     speeds, with and without this line - identical landings every time). It
+     is Safari's much longer fling that this is aimed at, and no test here can
+     reach it. So it is a one-line experiment on its own commit: revert that
+     commit and the previous feel is back exactly, with nothing else to undo. */
+  scroll-snap-stop: always;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  transition: transform 0.18s ease, opacity 0.18s ease;
+  z-index: 1;
+}
+.strip.dragging .cell { opacity: 0.55; }
+/* transform is set inline by applyDragVisuals() - a competing declaration here
+   reads as working right up until it doesn't. transition:none is load-bearing:
+   with the inherited 0.18s the held frame lags a fifth of a second behind the
+   finger, which is the whole feel. */
+.strip.dragging .cell.drag { opacity: 1; z-index: 3; transition: none; }
+
+/* The 180ms flight home. .dropping replaces .dragging so the dim fades back out
+   over the same beat the frame is travelling, and the held cell gets its
+   transition BACK (it was none while it tracked the finger). */
+.strip.dropping .cell { opacity: 1; }
+.strip.dropping .cell.drag { z-index: 3; transition: transform 0.18s ease; }
+
+/* 256x138 = a 320x172 stage at 0.8. The frame is the one thing that must
+   look like the device, so it keeps #000 in both themes. */
+.frame {
+  width: 256px;
+  height: 138px;
+  position: relative;
+  border-radius: 9px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--frame-edge);
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  transition: outline-color 0.2s ease, box-shadow 0.2s ease;
+}
+.cell.sel .frame { outline-color: var(--fg); }
+.cell.drag .frame { outline-color: var(--up); box-shadow: 0 18px 34px rgba(0, 0, 0, 0.5); }
+
+.stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 320px;
+  height: 172px;
+  transform: scale(0.8);
+  transform-origin: top left;
+  color: #fff;
+}
+.stage > * { position: absolute; }
+
+/* The star straddles the frame's top-left CORNER rather than sitting inside
+   it. That is not decoration: every one of the four layouts puts content in
+   the frame's top-left (a name, or the F&G title), so a badge placed inside
+   the frame covers the screen's own name on the layout users look at most.
+   Hanging it on the corner keeps it unmistakably attached to this frame while
+   covering nothing but the rounded edge.
+   It also has to live on .cell, not .frame: .frame is overflow:hidden for the
+   scaled stage, which would clip anything crossing its border. Being outside
+   the stage's transform is what keeps the hit area a true 44px too - a
+   control inside it would be scaled down to 80%. The negative offsets stay
+   inside the strip's own 22px padding, so nothing is clipped. */
+.star {
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--frame-edge);
+  background: var(--bg);
+  color: var(--dim);
+  font-size: 15px;
+  line-height: 1;
+}
+.star::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+.star.on { color: var(--up); border-color: var(--up); }
+
+.cap-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+}
+.cap-row .pos { font-size: 11px; font-weight: 700; color: var(--up); }
+.cap-row .sub {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cap-row .dot6 { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+
+.add-cell { flex: none; width: 120px; display: flex; justify-content: center; }
+.add-btn {
+  width: 96px;
+  height: 138px;
+  background: none;
+  border: 1px dashed var(--frame-edge);
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+/* At MAX_SCREENS. Reads as spent rather than absent - the tile is still there
+   and still clickable, because addScreen() answers a tap on it with the
+   reason. A `disabled` button would swallow that tap and say nothing. */
+.add-btn.full { color: var(--dim); border-style: dotted; }
+
+/* One dot row for the whole strip, not one per frame. */
+.dots { display: flex; justify-content: center; align-items: center; gap: 6px; padding: 6px 0 0; }
+.dots button {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--dot-idle);
+  transition: background 0.18s ease, width 0.18s ease, height 0.18s ease;
+}
+.dots button.on { width: 8px; height: 8px; background: var(--dot-active); }
+
+/* --------------------------------------------------- device frame layouts */
+/* Every value below is in the unscaled 320x172 space and mirrors the
+   LVGL builders - change them only when the firmware layout itself changes. */
+.s-name   { left: 19px;  top: 24px;  font-size: 32px; font-weight: 700; }
+.s-ticker { right: 19px; top: 14px;  font-size: 15px; font-weight: 700; }
+.s-price  { left: 19px;  top: 70px;  font-size: 40px; font-weight: 700;
+            white-space: nowrap; }
+.s-change { right: 19px; top: 106px; font-size: 19px; }
+.s-today  { right: 19px; top: 128px; font-size: 19px; }
+
+.d-div    { left: 159px; top: 27px;  width: 2px; height: 118px; background: #fff; }
+.d-name   { left: 20px;  top: 27px;  font-size: 20px; font-weight: 700; }
+/* Centred on the column, not left-positioned: buildDualColumn() aligns
+   every dual element with LV_ALIGN_TOP_MID at 160 -/+ 80, so a price whose
+   width changes (a currency code, a shrunk font) has to grow symmetrically
+   here too or the preview stops matching the panel. */
+.d-price  { left: 80px;  top: 70px;  font-size: 28px; font-weight: 700;
+            transform: translateX(-50%); white-space: nowrap; }
+.d-change { left: 49px;  top: 120px; font-size: 14px; }
+.d-today  { left: 49px;  top: 137px; font-size: 14px; }
+.d-name2  { left: 201px; top: 27px;  font-size: 20px; font-weight: 700; }
+.d-price2 { left: 240px; top: 70px;  font-size: 28px; font-weight: 700;
+            transform: translateX(-50%); white-space: nowrap; }
+.d-chg2   { left: 224px; top: 120px; font-size: 14px; }
+.d-today2 { left: 223px; top: 137px; font-size: 14px; }
+
+.g-title { left: 19px; top: 24px; font-size: 30px; font-weight: 700; }
+.g-track {
+  left: 44px;
+  top: 78px;
+  width: 233px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--dot-active);
+}
+.g-knob { top: 70px; width: 20px; height: 20px; border-radius: 50%; transition: left 0.25s ease; }
+.g-block { top: 94px; width: 124px; text-align: center; transition: left 0.25s ease; }
+.g-block .v { font-size: 40px; font-weight: 700; line-height: 1; }
+.g-block .l { font-size: 15px; font-weight: 700; margin-top: 6px; }
+
+.c-title { left: 19px; top: 20px; width: 120px; font-size: 30px; font-weight: 700; line-height: 1.05; }
+/* 300 degrees of track from 210deg, the remaining 60 left open at the
+   bottom - the same sweep as the device arc. */
+.c-arc {
+  left: 171px;
+  top: 32px;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  background: conic-gradient(from 210deg, var(--dot-idle) 0deg 300deg, transparent 300deg 360deg);
+}
+.c-hole { left: 179px; top: 40px; width: 112px; height: 112px; border-radius: 50%; background: #000; }
+.c-knob { width: 23px; height: 23px; border-radius: 50%; transition: left 0.25s ease, top 0.25s ease; }
+.c-val { left: 167px; top: 64px; width: 136px; text-align: center; font-size: 44px; font-weight: 700; line-height: 1; }
+.c-lab { left: 167px; top: 114px; width: 136px; text-align: center; font-size: 17px; font-weight: 700; }
+
+/* ------------------------------------------------------------- settings */
+.orient { display: flex; gap: 10px; margin-bottom: 22px; }
+.orient button {
+  flex: 1;
+  padding: 14px 8px;
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 1.35;
+  background: none;
+  border: 1px solid var(--field);
+}
+.orient button small { font-size: 11px; opacity: 0.7; }
+.orient button.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+.pair { display: flex; gap: 14px; margin-top: 14px; }
+.pair > label { flex: 1; }
+
+.divider { margin-top: 32px; padding-top: 26px; border-top: 1px solid var(--line); }
+.section-gap { margin: 28px 0 14px; }
+.section-gap-tight { margin: 32px 0 4px; }
+
+.adv-btn {
+  width: 100%;
+  margin-top: 32px;
+  padding: 15px 16px;
+  background: var(--chip);
+  border: none;
+  border-radius: 16px;
+  font-size: 13px;
+  text-align: left;
+}
+.host-fields { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+
+/* -------------------------------------------------------------- tab bar */
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  border-top: 1px solid var(--line);
+  background: var(--tab-bg);
+  padding: 8px 14px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+.tabbar .inner { max-width: 430px; margin: 0 auto; display: flex; }
+.tabbar button {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 12px 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--tab-idle);
+  border-bottom: 2px solid transparent;
+}
+.tabbar button.on { color: var(--fg); border-bottom-color: var(--up); }
+
+/* Factory-reset curtain: above the tab bar (20), backdrop (30) and sheet (31),
+   and opaque - the backdrop's translucent black would leave a normal-looking
+   Settings page readable behind it. */
+.curtain {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+.curtain-body { max-width: 340px; }
+.curtain-body h2 { margin: 0 0 12px; font-size: 22px; }
+.curtain-body p, .curtain-body li { font-size: 15px; line-height: 1.55; color: var(--muted); }
+.curtain-body ol { padding-left: 20px; margin: 16px 0; }
+.curtain-body strong { color: var(--fg); }
+.curtain-body.ota { width: 100%; }
+.ota-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--chip);
+  overflow: hidden;
+  margin: 18px 0 12px;
+}
+.ota-fill {
+  height: 100%;
+  width: 0;
+  background: var(--up);
+  transition: width 0.2s linear;
+}
+.ota-fill.err { background: var(--down); }
+
+/* ---------------------------------------------------------------- sheet */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease;
+}
+.backdrop.open { opacity: 1; pointer-events: auto; }
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 31;
+  max-width: 430px;
+  margin: 0 auto;
+  max-height: 88%;
+  overflow-y: auto;
+  background: var(--sheet-bg);
+  border-top: 1px solid var(--frame-edge);
+  border-radius: 22px 22px 0 0;
+  padding: 16px 22px calc(30px + env(safe-area-inset-bottom, 0px));
+  transform: translateY(105%);
+  transition: transform 0.32s cubic-bezier(0.22, 0.9, 0.24, 1);
+  pointer-events: none;
+}
+.sheet.open { transform: translateY(0); pointer-events: auto; }
+
+.grab { width: 38px; height: 4px; border-radius: 2px; background: var(--field); margin: 0 auto 16px; }
+.sheet-head { display: flex; align-items: baseline; margin-bottom: 18px; }
+.sheet-head h2 { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+.sheet-head .age { margin-left: auto; font-size: 12px; white-space: nowrap; color: var(--dim); }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid .full { grid-column: 1 / -1; }
+
+.pill-head { display: flex; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.pill-head .val { margin-left: auto; color: var(--fg); font-weight: 700; }
+.pills { display: flex; gap: 8px; }
+.pills button {
+  flex: 1;
+  padding: 12px 0;
+  border-radius: 999px;
+  font-size: 13px;
+  background: none;
+  border: 1px solid var(--field);
+}
+.pills button.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+/* Only shown on the starred screen - the thresholds mean nothing anywhere
+   else, and a field that does nothing is worse than no field at all. */
+.mood-block { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 16px; }
+.mood-block .why { font-size: 12px; line-height: 1.5; color: var(--dim); margin: 0 0 14px; }
+
+.sheet-foot { display: flex; gap: 10px; margin-top: 22px; }
+.sheet-foot .rm {
+  flex: none;
+  padding: 15px 18px;
+  background: none;
+  border: 1px solid var(--danger-edge);
+  border-radius: 999px;
+  color: var(--down);
+  font-size: 14px;
+}
+.sheet-foot .done {
+  flex: 1;
+  padding: 15px;
+  background: var(--fg);
+  color: var(--bg);
+  border: none;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* ------------------------------------------- spacing the markup asks for */
+/* Kept here rather than as inline styles so the whole visual language stays
+   in one file. Values are the design's, per element - they differ by a few
+   pixels between sections and that is deliberate, not drift. */
+.setup-fields { margin-top: 18px; }
+.mood-title { margin-top: 8px; }
+.list-head { margin-bottom: 4px; }
+.strip-head { padding-bottom: 6px; }
+.save-block { padding-top: 18px; }
+.actions { display: flex; gap: 10px; margin-top: 18px; }
+
+.btn-primary.spaced { margin-top: 20px; }
+#btnConnect { margin-top: 22px; }
+#btnSaveSystem { margin-top: 18px; }
+
+/* The face's band ladder. Three cut points, warmest first; Neutral has no row
+   because it has no threshold - #neutralNote reports the gap it is left with
+   and updates as the other two are typed. */
+.bands { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.band {
+  display: grid;
+  grid-template-columns: 1fr auto 92px;
+  align-items: center;
+  gap: 12px;
+}
+.band-name { font-size: 15px; }
+.band-op { font-size: 12px; color: var(--dim); }
+.band-in { display: flex; align-items: center; gap: 5px; }
+.band-in .field { flex: 1; min-width: 0; text-align: right; }
+.band-in .pct { flex: none; font-size: 13px; color: var(--muted); }
+/* The spinners are a separate pseudo-element, so .field's own appearance:none
+   does not reach them - and they crowd a 92px column badly. */
+.band-in input::-webkit-outer-spin-button,
+.band-in input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.band-in input[type="number"] { -moz-appearance: textfield; }
+
+/* The Advanced fold opens right under its own button, so it does not want
+   the full section gap the top-level eyebrows use. */
+#advBlock .eyebrow { margin: 18px 0 12px; }
+#advBlock .lede { margin: 0 0 16px; font-size: 13px; }
+
+/* The band rows are labels wrapping their input, so the whole row is the tap
+   target - held at the design's 44px floor rather than the input's own height. */
+.band { min-height: 44px; }
+
+/* ------------------------------------------------------- instrument search */
+/* While searching, the sheet is only the search: everything else belongs to the
+   screen being edited, which is one Back away. */
+.sheet.finding .grid > :not(#findWrap) { display: none !important; }
+
+.f-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.f-back {
+  flex: none; background: none; border: 1px solid var(--field); border-radius: 999px;
+  padding: 6px 12px; font-size: 13px; color: var(--muted);
+}
+.f-title { font-size: 12px; color: var(--muted); }
+#fFind { font-size: 17px; }
+.f-pair { margin: 10px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--warn); }
+
+.f-status {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  min-height: 20px; margin: 12px 0 2px; font-size: 13px; color: var(--muted);
+}
+.f-step { display: inline-flex; align-items: center; gap: 6px; }
+.f-step i { width: 8px; height: 8px; border-radius: 50%; background: var(--field); }
+.f-step.run i { background: var(--warn); animation: f-pulse 0.8s ease-in-out infinite alternate; }
+.f-step.ok i { background: var(--up); }
+@keyframes f-pulse { from { opacity: 0.35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .f-step.run i { animation: none; } }
+
+.f-group { margin-top: 14px; }
+.f-head {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 4px;
+}
+.f-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: center;
+  width: 100%; padding: 10px 0; text-align: left;
+  background: none; border: none; border-bottom: 1px solid var(--line);
+}
+.f-group .f-row:last-child { border-bottom: none; }
+.f-group.best .f-row {
+  background: var(--chip); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 12px; margin-bottom: 6px;
+}
+.f-name { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f-sym { font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace; font-size: 14px; text-align: right; }
+.f-meta { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f-src { font-size: 11px; color: var(--dim); text-align: right; white-space: nowrap; }
+.f-why { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+.f-note { font-size: 12px; line-height: 1.45; color: var(--dim); margin: 12px 0 0; }
+.f-empty { font-size: 14px; line-height: 1.5; color: var(--muted); margin: 12px 0 0; }
+.f-pairnote { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.f-pairnote .f-note { margin-top: 0; }
+.f-swap {
+  margin-top: 10px; width: 100%; padding: 11px 12px; font-size: 13px; text-align: left;
+  color: var(--fg); background: var(--chip); border: 1px solid var(--field); border-radius: 10px;
+}
+
+/* The screen as the control. */
+.picked-frame { display: flex; justify-content: center; }
+.picked-frame .frame { position: relative; }
+.tap-zone {
+  position: absolute; top: 0; bottom: 0; z-index: 2;
+  background: transparent; border: none; border-radius: 0;
+  font-size: 13px; font-weight: 600; color: var(--fg);
+}
+.tap-zone.all { left: 0; right: 0; }
+.tap-zone.left { left: 0; width: 50%; }
+.tap-zone.right { right: 0; width: 50%; }
+.tap-zone.empty { background: rgba(255, 255, 255, 0.06); }
+.tap-zone:hover { background: rgba(255, 255, 255, 0.09); }
+.tap-zone:focus-visible { outline: 2px solid var(--up); outline-offset: -2px; }
+.picked-hint { margin: 8px 0 0; font-size: 12px; color: var(--dim); text-align: center; }
+
+/* One name per half, centred under the half it names, held to the frame width. */
+.name-row {
+  display: grid; grid-template-columns: 1fr; gap: 14px;
+  width: 256px; max-width: 100%; margin: 14px auto 0;
+}
+.name-row.two { grid-template-columns: 1fr 1fr; }
+.name-row .field-label, .name-row .field { text-align: center; }
+
+.picked-check { margin: 12px 0 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.picked-check.ok { color: var(--up); }
+.picked-check.failed { color: var(--down); }

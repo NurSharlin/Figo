@@ -1,0 +1,7 @@
+# Store text as LF on every platform.
+* text=auto eol=lf
+
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.3mf  binary

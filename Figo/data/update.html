@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Figo update</title>
+<!-- The fallback update page. Deliberately standalone (no app.js, no style.css):
+     its whole job is the case where a NEW firmware is healthy but its Update card
+     is broken, so it must not depend on anything that can break with the SPA.
+     The device checks the image itself; this page only sends it. -->
+<style>
+body{margin:0;padding:24px 16px;background:#000;color:#fff;font:16px/1.5 system-ui,sans-serif;max-width:430px;margin:auto}
+h1{font-size:22px;margin:0 0 8px}p{color:#8a8a8a;font-size:14px}
+button{width:100%;padding:16px;border:0;border-radius:999px;background:#00bc16;color:#001a03;font:700 15px system-ui;margin-top:16px}
+button:disabled{opacity:.4}
+input{width:100%;margin-top:12px;color:#fff}
+#bar{height:8px;background:#111;border-radius:4px;margin-top:20px;overflow:hidden}
+#fill{height:100%;width:0;background:#00bc16}
+#st{color:#fff;min-height:24px;margin-top:12px}
+.e{color:#d60307}
+</style></head><body>
+<h1>Update Figo</h1>
+<p>Pick <b>Figo.ino.bin</b> (not the <b>.merged.bin</b>). Figo checks the file and
+refuses one it can't run.</p>
+<input type="file" id="f" accept=".bin">
+<button id="go" disabled>Install</button>
+<div id="bar"><div id="fill"></div></div>
+<div id="st"></div>
+<script>
+var $=function(i){return document.getElementById(i)},go=$("go"),st=$("st");
+function say(t,e,p){st.textContent=t;st.className=e?"e":"";if(p!=null)$("fill").style.width=p+"%"}
+function sl(ms){return new Promise(function(r){setTimeout(r,ms)})}
+function gj(u){return fetch(u,{cache:"no-store"}).then(function(r){return r.json()})}
+$("f").onchange=function(){go.disabled=!$("f").files[0]};
+go.onclick=async function(){
+  var f=$("f").files[0];if(!f)return;go.disabled=true;
+  try{
+    say("Getting Figo ready...",0,0);
+    var b=await fetch("/api/ota/begin",{method:"POST"}),j=await b.json();
+    if(!b.ok)throw Error(j.error||"Figo refused");
+    var s={};for(var i=0;i<60&&s.state!=="ready"&&s.state!=="failed";i++){await sl(500);s=await gj("/api/ota/status")}
+    if(s.state!=="ready")throw Error(s.error||"Figo didn't get ready");
+    await new Promise(function(ok,no){
+      var x=new XMLHttpRequest();x.open("POST","/api/ota/upload?token="+j.token);
+      x.setRequestHeader("Content-Type","application/octet-stream");
+      x.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.floor(e.loaded/e.total*100);say("Sending... "+p+"%",0,p)}};
+      x.onload=function(){var r={};try{r=JSON.parse(x.responseText)}catch(e){}x.status==200?ok():no(Error(r.error||"Upload failed"))};
+      x.onerror=function(){no(Error("Lost the connection to Figo"))};x.send(f)});
+    say("Checking...",0,100);
+    for(i=0;i<120&&s.state!=="done"&&s.state!=="failed";i++){await sl(500);s=await gj("/api/ota/status")}
+    if(s.state!=="done")throw Error(s.error||"Figo didn't confirm");
+    say("Restarting... this can take a minute.",0,100);await sl(3000);
+    for(i=0;i<160;i++){try{var t=await gj("/api/status");if(t.ota_state==="valid"){say("Done. Figo is running v"+t.firmware+".",0,100);return}}catch(e){}await sl(1500)}
+    throw Error("Figo hasn't come back. Check its screen.")
+  }catch(e){say(e.message,1);go.disabled=false}
+};
+</script></body></html>

@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<!-- The one thing that gets rid of iOS Safari's edge-swipe back/forward on
+     this page. It is a system gesture, so no amount of preventDefault or
+     overscroll-behavior in here touches it - but a page added to the home
+     screen and launched standalone has no browser history chrome behind it,
+     and so no edge swipe either. Inert until the user actually taps Add to
+     Home Screen; in a normal tab these two lines change nothing. The Android
+     half of the same problem IS fixable from CSS - see overscroll-behavior-x
+     on .strip in style.css. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Figo">
+<title>Figo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!--
+  The whole page is here as static markup; app.js only fills values in and
+  rebuilds the genuinely list-shaped parts (the filmstrip, the dot row, the
+  network list, the freshness rows). Re-rendering everything from JS would
+  blow away input focus mid-typing and reset the strip's scroll position on
+  every poll, which is exactly what a device page must not do.
+-->
+<main id="app">
+
+  <!-- ============================================================ FIGO -->
+  <section id="tab-status" class="tab-panel active">
+
+    <!-- Setup state: SoftAP first run, and where a lost WiFi link lands too.
+         Figo speaks in the first person HERE ONLY; Settings copy is neutral. -->
+    <div id="setupCard" hidden>
+      <div class="hello-row">
+        <h1 class="title title-2l">Hi!<br>I'm Figo!</h1>
+        <div class="face-slot">
+          <!-- Greeting face: CSS shapes.
+               Decorative, so it is hidden from assistive tech - the heading
+               beside it already says who this is. -->
+          <div class="face" aria-hidden="true">
+            <div class="brow brow-l"><i></i><span class="cap cap-l"></span><span class="cap cap-r"></span></div>
+            <div class="brow brow-r"><i></i><span class="cap cap-l"></span><span class="cap cap-r"></span></div>
+            <div class="eye eye-l"><i></i></div>
+            <div class="eye eye-r"><i></i></div>
+            <div class="mouth"><i></i><span class="cap cap-l"></span><span class="cap cap-r"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <p class="intro">Let's get you online. Pick your WiFi and I'll hop over to
+        it, then look for me at figo.local.</p>
+
+      <div class="row-head">
+        <span class="eyebrow sub">Nearby</span>
+        <button type="button" id="btnScan" class="btn-chip">Scan again</button>
+      </div>
+      <div id="networkList"></div>
+
+      <div class="setup-fields">
+        <input id="ssidInput" class="field field-lg" type="text" placeholder="Network name"
+               maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <input id="passInput" class="field field-lg" type="password" placeholder="Password"
+               maxlength="63" autocomplete="off">
+      </div>
+      <button type="button" id="btnConnect" class="btn-primary spaced">Connect</button>
+      <p id="wifiMsg" class="msg"></p>
+    </div>
+
+    <!-- Connected state: the mood, then how fresh each screen's data is. -->
+    <div id="connectedCard" hidden>
+      <div class="eyebrow">Right now</div>
+      <h1 class="title mood-title" id="moodLabel">&hellip;</h1>
+      <p class="lede" id="moodWhy"></p>
+
+      <div class="eyebrow sub list-head">Last refresh</div>
+      <div id="refreshList"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= SCREENS -->
+  <section id="tab-screens" class="tab-panel">
+    <div class="strip-head">
+      <h1 class="title title-lg" id="screensTitle">&hellip;</h1>
+      <p class="hint" id="stripHint">Tap a frame to edit it, hold and drag to reorder.</p>
+    </div>
+
+    <!-- Frames are built by app.js: one .cell per configured screen, then the
+         trailing dashed + Add. -->
+    <div class="strip-wrap">
+      <div class="strip" id="strip"></div>
+    </div>
+
+    <!-- One dot row for the WHOLE strip, not one per frame. -->
+    <div class="dots" id="dots"></div>
+
+    <div class="save-block">
+      <button type="button" id="btnSaveScreens" class="btn-primary">Save carousel</button>
+      <p id="screensMsg" class="msg"></p>
+    </div>
+  </section>
+
+  <!-- ======================================================== SETTINGS -->
+  <section id="tab-settings" class="tab-panel">
+    <h1 class="title">Settings</h1>
+
+    <div class="eyebrow section-gap">Figo's screen</div>
+
+    <div class="row-plain">
+      <span class="k">Brightness</span>
+      <span class="v" id="brightnessVal">&mdash;</span>
+    </div>
+    <input type="range" id="brightness" class="range" min="10" max="100" step="1" value="80"
+           aria-label="Brightness">
+
+    <div class="field-label">Orientation</div>
+    <div class="orient">
+      <button type="button" id="rot0">Normal<br><small>cable on the right</small></button>
+      <button type="button" id="rot180">Flipped<br><small>cable on the left</small></button>
+    </div>
+
+    <div class="toggle-row">
+      <span class="lbl">
+        <b>Sleep at night</b>
+        <small id="sleepSummary">Display stays on around the clock.</small>
+      </span>
+      <button type="button" id="sleepToggle" class="toggle" role="switch" aria-checked="false"
+              aria-label="Sleep at night"><span></span></button>
+    </div>
+
+    <!-- Native selects of 15-minute options, never a free-text time field:
+         the firmware validates a strict "HH:MM" and a typo there is a 400. -->
+    <div class="pair" id="sleepFields" hidden>
+      <label>
+        <span class="field-label">Sleep from</span>
+        <select id="sleepStart" class="field field-lg"></select>
+      </label>
+      <label>
+        <span class="field-label">Sleep until</span>
+        <select id="sleepEnd" class="field field-lg"></select>
+      </label>
+    </div>
+
+    <p class="caption">Orientation applies after a reboot.</p>
+    <button type="button" id="btnSaveSystem" class="btn-primary spaced">Save settings</button>
+    <p id="systemMsg" class="msg"></p>
+
+    <div class="divider toggle-row">
+      <span class="lbl">
+        <b>Bright mode for this app</b>
+        <small>Light theme for this phone page. Figo's own screen is not affected.</small>
+      </span>
+      <button type="button" id="brightToggle" class="toggle" role="switch" aria-checked="false"
+              aria-label="Bright mode for this app"><span></span></button>
+    </div>
+
+    <div id="connectionBlock" hidden>
+      <div class="eyebrow section-gap-tight">Connection</div>
+      <div class="row"><span class="k">Network</span><span id="infoSsid">&mdash;</span></div>
+      <div class="row"><span class="k">Address</span><span id="infoIp">&mdash;</span></div>
+      <div class="row"><span class="k">Firmware</span><span id="infoFirmware">&mdash;</span></div>
+      <div class="actions">
+        <button type="button" id="btnForget" class="btn-danger">Forget network</button>
+        <button type="button" id="btnReboot" class="btn-neutral">Reboot</button>
+      </div>
+
+      <div class="eyebrow sub section-gap">Update</div>
+      <p class="lede">Install a new firmware from this phone. Pick
+        <strong>Figo.ino.bin</strong> from your build folder, not the
+        <strong>.merged.bin</strong> beside it.</p>
+      <input type="file" id="otaFile" accept=".bin" hidden>
+      <div class="actions">
+        <button type="button" id="btnOtaPick" class="btn-neutral">Choose firmware file</button>
+      </div>
+      <div id="otaPlan" hidden>
+        <p class="caption" id="otaPlanText"></p>
+        <div class="actions">
+          <button type="button" id="btnOtaGo" class="btn-primary">Install</button>
+          <button type="button" id="btnOtaCancel" class="btn-neutral">Cancel</button>
+        </div>
+      </div>
+      <p id="otaMsg" class="msg" role="status" aria-live="polite"></p>
+    </div>
+
+    <button type="button" id="btnAdv" class="adv-btn" aria-expanded="false">&#9656; Advanced</button>
+    <div id="advBlock" hidden>
+
+      <div class="eyebrow sub section-gap">Figo's face</div>
+      <p class="lede">Figo watches whichever screen you starred on the Screens
+        tab and compares its 24h change against these.</p>
+
+      <!-- Three cut points, four bands. Neutral has no row because it has no
+           threshold of its own - it is the gap between the bottom two, and is
+           reported live in the caption underneath. -->
+      <div class="bands">
+        <label class="band">
+          <span class="band-name">Bullish</span>
+          <span class="band-op">above</span>
+          <span class="band-in">
+            <input type="number" id="fBull" class="field" step="0.1" inputmode="decimal">
+            <span class="pct">%</span>
+          </span>
+        </label>
+        <label class="band">
+          <span class="band-name">Happy</span>
+          <span class="band-op">above</span>
+          <span class="band-in">
+            <input type="number" id="fHappy" class="field" step="0.1" inputmode="decimal">
+            <span class="pct">%</span>
+          </span>
+        </label>
+        <label class="band">
+          <span class="band-name">Panicked</span>
+          <span class="band-op">below</span>
+          <span class="band-in">
+            <input type="number" id="fBear" class="field" step="0.1" inputmode="decimal">
+            <span class="pct">%</span>
+          </span>
+        </label>
+      </div>
+      <p class="caption" id="neutralNote"></p>
+
+      <button type="button" id="btnSaveFace" class="btn-primary spaced">Save face</button>
+      <p id="faceMsg" class="msg"></p>
+
+      <div class="eyebrow sub section-gap">Data providers</div>
+      <p class="lede">Figo talks straight to these public APIs, nothing is proxied
+        through a server. Change a host only if an endpoint moves.</p>
+
+      <label>
+        <span class="field-label">CoinGecko API key</span>
+        <input type="text" id="cgKey" class="field" maxlength="39"
+               placeholder="Leave blank to stay keyless" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="caption" id="cgKeyState"></p>
+
+      <div class="host-fields">
+        <label>
+          <span class="field-label">Stocks &amp; commodities (Yahoo)</span>
+          <input type="text" id="hostYahoo" class="field field-sm" maxlength="47"
+                 autocomplete="off" autocapitalize="none" spellcheck="false">
+        </label>
+        <label>
+          <span class="field-label">Crypto (CoinGecko)</span>
+          <input type="text" id="hostCg" class="field field-sm" maxlength="47"
+                 autocomplete="off" autocapitalize="none" spellcheck="false">
+        </label>
+        <label>
+          <span class="field-label">Crypto Fear &amp; Greed</span>
+          <input type="text" id="hostFngC" class="field field-sm" maxlength="47"
+                 autocomplete="off" autocapitalize="none" spellcheck="false">
+        </label>
+        <label>
+          <span class="field-label">Stock-market Fear &amp; Greed</span>
+          <input type="text" id="hostFngS" class="field field-sm" maxlength="47"
+                 autocomplete="off" autocapitalize="none" spellcheck="false">
+        </label>
+        <p class="caption">Hostnames only, no https://, port or path.</p>
+      </div>
+
+      <button type="button" id="btnSaveProviders" class="btn-primary spaced">Save providers</button>
+      <p id="providersMsg" class="msg"></p>
+
+      <div class="eyebrow sub section-gap">Start over</div>
+      <p class="lede">Erases Figo's WiFi, screens, settings, face thresholds and
+        provider hosts, then restarts into setup. There is no undo.</p>
+      <div class="actions">
+        <button type="button" id="btnReset" class="btn-danger">Factory reset</button>
+        <button type="button" id="btnResetCancel" class="btn-neutral" hidden>Cancel</button>
+      </div>
+      <p id="resetMsg" class="msg" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+</main>
+
+<nav class="tabbar">
+  <div class="inner">
+    <button type="button" class="tab-btn on" data-tab="status">FIGO</button>
+    <button type="button" class="tab-btn" data-tab="screens">SCREENS</button>
+    <button type="button" class="tab-btn" data-tab="settings">SETTINGS</button>
+  </div>
+</nav>
+
+<div class="backdrop" id="backdrop"></div>
+
+<!-- Editor sheet. Static fields; app.js binds the selected screen into them
+     on open and writes each edit straight back into client state. -->
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="grab"></div>
+  <div class="sheet-head">
+    <h2 id="sheetTitle">Screen</h2>
+    <span class="age" id="sheetAge"></span>
+  </div>
+
+  <div class="grid">
+    <!-- Find an instrument by name. Tapping a result fills in the source, the
+         symbol and a name that fits. -->
+    <div class="full" id="findWrap" hidden>
+      <div class="f-top">
+        <button type="button" class="f-back" id="btnFindBack">← Back</button>
+        <span class="f-title" id="findLabel">Find an instrument</span>
+      </div>
+      <input type="search" id="fFind" class="field" maxlength="31" placeholder="S&amp;P 500, Bitcoin, Gold, TA35…"
+             autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="search">
+      <p class="f-pair" id="findPairNote" hidden></p>
+      <div class="f-status" id="findStatus"></div>
+      <div id="findResults"></div>
+    </div>
+
+    <!-- The screen IS the control: tap a half to change what it shows, and each
+         name sits under the half it names. -->
+    <div class="full" id="previewBlock">
+      <div class="picked-frame" id="pickedFrame"></div>
+      <p class="picked-hint" id="pickedHint"></p>
+      <div class="name-row" id="nameRow">
+        <label id="nameWrap">
+          <span class="field-label">Name on screen</span>
+          <input type="text" id="fName" class="field" maxlength="12" autocomplete="off">
+        </label>
+        <label id="name2Wrap" hidden>
+          <span class="field-label">Right name</span>
+          <input type="text" id="fName2" class="field" maxlength="10" autocomplete="off">
+        </label>
+      </div>
+      <p class="picked-check" id="pickedCheck"></p>
+    </div>
+
+    <!-- Layout and Fear &amp; Greed are one question - what KIND of screen this
+         is - so they share one pill row, the same control as Refresh every. -->
+    <div class="full" id="typeBlock">
+      <div class="pill-head">
+        <span>Screen type</span>
+        <span class="val" id="fTypeVal"></span>
+      </div>
+      <div class="pills" id="typePills"></div>
+    </div>
+
+    <div class="full" id="fgIndexBlock" hidden>
+      <div class="pill-head">
+        <span>Index</span>
+        <span class="val" id="fIndexVal"></span>
+      </div>
+      <div class="pills" id="fgIndexPills"></div>
+    </div>
+
+    <div class="full" id="fgStyleBlock" hidden>
+      <div class="pill-head">
+        <span>Gauge</span>
+        <span class="val" id="fStyleVal"></span>
+      </div>
+      <div class="pills" id="fgStylePills"></div>
+    </div>
+
+    <div class="full">
+      <div class="pill-head">
+        <span>Refresh every</span>
+        <span class="val" id="fIntervalVal"></span>
+      </div>
+      <div class="pills" id="intervalPills"></div>
+    </div>
+
+    <!-- Shown only for the starred screen. The thresholds themselves live in
+         Settings, so this is a pointer, not a control: without it the star on
+         the frame is the only clue that this screen does anything special. -->
+    <div class="full mood-block" id="moodNote" hidden>
+      <p class="why">This screen drives Figo's face. The thresholds are in
+        Settings, under Advanced.</p>
+    </div>
+  </div>
+
+  <div class="sheet-foot">
+    <button type="button" class="rm" id="btnRemove">Remove</button>
+    <button type="button" class="done" id="btnDone">Done</button>
+  </div>
+</div>
+
+<!-- Shown after a factory reset. Opaque and undismissable on purpose: the device
+     this page came from is erasing itself, so every control behind it is lying. -->
+<div class="curtain" id="resetCurtain" role="alertdialog" aria-modal="true"
+     aria-labelledby="curtainTitle" hidden>
+  <div class="curtain-body">
+    <h2 id="curtainTitle">Figo is resetting</h2>
+    <p>Everything has been erased and Figo is restarting into setup.</p>
+    <ol>
+      <li>Join the WiFi network <strong>Figo-Setup</strong> (password <strong>figo1234</strong>).</li>
+      <li>Open <strong>figo.local</strong> in your browser.</li>
+    </ol>
+    <p class="caption">This page can no longer talk to Figo. Close it.</p>
+  </div>
+</div>
+
+<!-- The update in progress. Opaque and undismissable while it runs, like the reset
+     curtain: Figo is busy and every control behind this is either refused or
+     lying. Only a failure offers Close. -->
+<div class="curtain" id="otaCurtain" role="alertdialog" aria-modal="true"
+     aria-labelledby="otaTitle" hidden>
+  <div class="curtain-body ota">
+    <h2 id="otaTitle">Updating Figo</h2>
+    <div class="ota-track"><div class="ota-fill" id="otaFill"></div></div>
+    <p id="otaStatus">Getting Figo ready&hellip;</p>
+    <p class="caption" id="otaHint">Keep this page open and Figo powered.</p>
+    <div class="actions">
+      <button type="button" id="btnOtaClose" class="btn-neutral" hidden>Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

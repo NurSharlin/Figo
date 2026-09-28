@@ -1,0 +1,18 @@
+# Build output
+build/
+*.bin
+*.elf
+*.map
+*.hex
+*.uf2
+
+# Dependencies
+node_modules/
+
+# Local secrets and editor files
+secrets.h
+.env
+.env.*
+.vscode/
+.DS_Store
+Thumbs.db
